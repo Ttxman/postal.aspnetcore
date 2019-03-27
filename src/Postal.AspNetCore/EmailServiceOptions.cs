@@ -1,8 +1,9 @@
-﻿using System;
+﻿
+using MailKit.Net.Smtp;
+using MailKit.Security;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
-using System.Net.Mail;
 using System.Threading.Tasks;
 
 namespace Postal.AspNetCore
@@ -11,21 +12,25 @@ namespace Postal.AspNetCore
     {
         public EmailServiceOptions()
         {
-            CreateSmtpClient = () => new SmtpClient(Host, Port)
+            PrepareSmtpClientAsync = async () =>
             {
-                UseDefaultCredentials = string.IsNullOrWhiteSpace(UserName),
-                Credentials = string.IsNullOrWhiteSpace(UserName) ? null : new NetworkCredential(UserName, Password),
-                EnableSsl = EnableSSL
+                var client = new SmtpClient();
+
+                await client.ConnectAsync(Host, Port, SecurityOption);
+
+                if (!string.IsNullOrWhiteSpace(UserName))
+                    await client.AuthenticateAsync(UserName, Password);
+
+                return client;
             };
         }
 
         public string Host { get; set; }
         public int Port { get; set; }
-        public bool EnableSSL { get; set; }
-        public string FromAddress { get; set; }
+        public SecureSocketOptions SecurityOption { get; set; }
         public string UserName { get; set; }
         public string Password { get; set; }
 
-        public Func<SmtpClient> CreateSmtpClient { get; set; }
+        public Func<Task<SmtpClient>> PrepareSmtpClientAsync { get; set; }
     }
 }

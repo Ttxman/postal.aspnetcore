@@ -1,8 +1,8 @@
 using System;
 using System.IO;
-using System.Net.Mail;
-using System.Net.Mime;
+using System.Linq;
 using System.Threading.Tasks;
+using MimeKit;
 using Moq;
 using Shouldly;
 using Xunit;
@@ -21,27 +21,27 @@ CC: test3@test.com
 Bcc: test4@test.com
 Reply-To: test5@test.com
 Sender: test6@test.com
-Priority: high
+Priority: Urgent
 X-Test: test
 Subject: Test Subject
 
 Hello, World!";
             var renderer = new Mock<IEmailViewRender>();
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, new Email("Test")))
-            {
-                message.To[0].Address.ShouldBe("test1@test.com");
-                message.From.Address.ShouldBe("test2@test.com");
-                message.CC[0].Address.ShouldBe("test3@test.com");
-                message.Bcc[0].Address.ShouldBe("test4@test.com");
-                message.ReplyToList[0].Address.ShouldBe("test5@test.com");
-                message.Subject.ShouldBe("Test Subject");
-                message.Sender.Address.ShouldBe("test6@test.com");
-                message.Priority.ShouldBe(MailPriority.High);
-                message.Headers["X-Test"].ShouldBe("test");
-                message.Body.ShouldBe("Hello, World!");
-                message.IsBodyHtml.ShouldBeFalse();
-            }
+            var message = await parser.ParseAsync(input, new Email("Test"));
+
+            message.To[0].ToString().ShouldBe("test1@test.com");
+            message.From.ToString().ShouldBe("test2@test.com");
+            message.Cc[0].ToString().ShouldBe("test3@test.com");
+            message.Bcc[0].ToString().ShouldBe("test4@test.com");
+            message.ReplyTo[0].ToString().ShouldBe("test5@test.com");
+            message.Subject.ShouldBe("Test Subject");
+            message.Sender.ToString().ShouldBe("test6@test.com");
+            message.Priority.ShouldBe(MessagePriority.Urgent);
+            message.Headers["X-Test"].ShouldBe("test");
+            message.TextBody.ShouldBe("Hello, World!");
+            message.HtmlBody.ShouldBeNull();
+
             renderer.Verify();
         }
 
@@ -56,11 +56,9 @@ Subject: Test Subject
 Hello, World!";
             var renderer = new Mock<IEmailViewRender>();
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, new Email("Test")))
-            {
-                message.To[0].Address.ShouldBe("test1@test.com");
-                message.To[0].DisplayName.ShouldBe("John H Smith");
-            }
+            var message = await parser.ParseAsync(input, new Email("Test"));
+            message.To[0].ToString().ShouldBe("test1@test.com");
+            message.To[0].ToString().ShouldBe("John H Smith");
             renderer.Verify();
         }
 
@@ -78,12 +76,12 @@ Subject: Test Subject
 Hello, World!";
             var renderer = new Mock<IEmailViewRender>();
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, new Email("Test")))
-            {
-                message.CC[0].Address.ShouldBe("test3@test.com");
-                message.CC[1].Address.ShouldBe("test4@test.com");
-                message.CC[2].Address.ShouldBe("test5@test.com");
-            }
+            var message = await parser.ParseAsync(input, new Email("Test"));
+
+            message.Cc[0].ToString().ShouldBe("test3@test.com");
+            message.Cc[1].ToString().ShouldBe("test4@test.com");
+            message.Cc[2].ToString().ShouldBe("test5@test.com");
+
         }
 
         [Fact]
@@ -98,12 +96,11 @@ Subject: Test Subject
 Hello, World!";
             var renderer = new Mock<IEmailViewRender>();
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, new Email("Test")))
-            {
-                message.CC[0].Address.ShouldBe("test3@test.com");
-                message.CC[1].Address.ShouldBe("test4@test.com");
-                message.CC[2].Address.ShouldBe("test5@test.com");
-            }
+            var message = await parser.ParseAsync(input, new Email("Test"));
+
+            message.Cc[0].ToString().ShouldBe("test3@test.com");
+            message.Cc[1].ToString().ShouldBe("test4@test.com");
+            message.Cc[2].ToString().ShouldBe("test5@test.com");
             renderer.Verify();
         }
 
@@ -118,11 +115,9 @@ Subject: Test Subject
 <p>Hello, World!</p>";
             var renderer = new Mock<IEmailViewRender>();
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, new Email("Test")))
-            {
-                message.Body.ShouldBe("<p>Hello, World!</p>");
-                message.IsBodyHtml.ShouldBeTrue();
-            }
+            var message = await parser.ParseAsync(input, new Email("Test"));
+            message.HtmlBody.ShouldBe("<p>Hello, World!</p>");
+            message.TextBody.ShouldBeNull();
         }
 
         [Fact]
@@ -137,11 +132,9 @@ Subject: Test Subject
 <p>Hello, World!</p>";
             var renderer = new Mock<IEmailViewRender>();
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, new Email("Test")))
-            {
-                message.Body.ShouldBe("<p>Hello, World!</p>");
-                message.IsBodyHtml.ShouldBeTrue();
-            }
+            var message = await parser.ParseAsync(input, new Email("Test"));
+            message.HtmlBody.ShouldBe("<p>Hello, World!</p>");
+            message.TextBody.ShouldBeNull();
             renderer.Verify();
         }
 
@@ -166,16 +159,10 @@ Hello, World!";
             renderer.Setup(r => r.RenderAsync(email, "Test.Html")).Returns(Task.FromResult(html));
 
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, email))
-            {
-                message.AlternateViews[0].ContentType.ShouldBe(new ContentType("text/plain; charset=utf-16"));
-                var textContent = new StreamReader(message.AlternateViews[0].ContentStream).ReadToEnd();
-                textContent.ShouldBe("Hello, World!");
+            var message = await parser.ParseAsync(input, email);
+            message.TextBody.ShouldBe("Hello, World!");
 
-                message.AlternateViews[1].ContentType.ShouldBe(new ContentType("text/html; charset=utf-16"));
-                var htmlContent = new StreamReader(message.AlternateViews[1].ContentStream).ReadToEnd();
-                htmlContent.ShouldBe("<p>Hello, World!</p>");
-            }
+            message.HtmlBody.ShouldBe("<p>Hello, World!</p>");
             renderer.Verify();
         }
 
@@ -200,16 +187,10 @@ Hello, World!";
             renderer.Setup(r => r.RenderAsync(email, "~/Views/Emails/Test.Html.cshtml")).Returns(Task.FromResult(html));
 
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, email))
-            {
-                message.AlternateViews[0].ContentType.ShouldBe(new ContentType("text/plain; charset=utf-16"));
-                var textContent = new StreamReader(message.AlternateViews[0].ContentStream).ReadToEnd();
-                textContent.ShouldBe("Hello, World!");
+            var message = await parser.ParseAsync(input, email);
+            message.TextBody.ShouldBe("Hello, World!");
 
-                message.AlternateViews[1].ContentType.ShouldBe(new ContentType("text/html; charset=utf-16"));
-                var htmlContent = new StreamReader(message.AlternateViews[1].ContentStream).ReadToEnd();
-                htmlContent.ShouldBe("<p>Hello, World!</p>");
-            }
+            message.HtmlBody.ShouldBe("<p>Hello, World!</p>");
 
             renderer.Verify();
         }
@@ -224,12 +205,12 @@ Subject: Test Subject
 
 Hello, World!";
             var email = new Email("Test");
-            email.Attach(new Attachment(new MemoryStream(), "name"));
+            email.BodyBuilder.Attachments.Add("name", Array.Empty<byte>());
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
 
             var message = await parser.ParseAsync(input, email);
 
-            message.Attachments.Count.ShouldBe(1);
+            message.Attachments.Count().ShouldBe(1);
         }
 
         [Fact]
@@ -251,11 +232,9 @@ Hello, World!";
             renderer.Setup(r => r.RenderAsync(email, "Test.Html")).Returns(Task.FromResult(html));
 
             var parser = new EmailParser(renderer.Object);
-            using (var message = await parser.ParseAsync(input, email))
-            {
-                message.AlternateViews[0].ContentType.MediaType.ShouldBe("text/plain");
-                message.AlternateViews[1].ContentType.MediaType.ShouldBe("text/html");
-            }
+            var message = await parser.ParseAsync(input, email);
+            message.TextBody.ShouldBe("text/plain");
+            message.HtmlBody.MediaType.ShouldBe("text/html");
 
             renderer.Verify();
         }
@@ -266,10 +245,8 @@ Hello, World!";
             dynamic email = new Email("Test");
             email.To = "test@test.com";
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
-            using (var message = await parser.ParseAsync("body", (Email)email))
-            {
-                message.To[0].Address.ShouldBe("test@test.com");
-            }
+            var message = await parser.ParseAsync("body", (Email)email);
+            message.To[0].ToString().ShouldBe("test@test.com");
         }
 
         [Fact]
@@ -278,10 +255,8 @@ Hello, World!";
             dynamic email = new Email("Test");
             email.Subject = "test";
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
-            using (var message = await parser.ParseAsync("body", (Email)email))
-            {
-                message.Subject.ShouldBe("test");
-            }
+            var message = await parser.ParseAsync("body", (Email)email);
+            message.Subject.ShouldBe("test");
         }
 
         [Fact]
@@ -290,22 +265,18 @@ Hello, World!";
             dynamic email = new Email("Test");
             email.From = "test@test.com";
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
-            using (var message = await parser.ParseAsync("body", (Email)email))
-            {
-                message.From.Address.ShouldBe("test@test.com");
-            }
+            var message = await parser.ParseAsync("body", (Email)email);
+            message.From.ToString().ShouldBe("test@test.com");
         }
 
         [Fact]
         public async Task From_header_can_be_set_automatically_as_MailAddress()
         {
             dynamic email = new Email("Test");
-            email.From = new MailAddress("test@test.com");
+            email.From = new MailboxAddress("test@test.com");
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
-            using (var message = await parser.ParseAsync("body", (Email)email))
-            {
-                message.From.ShouldBe(new MailAddress("test@test.com"));
-            }
+            var message = await parser.ParseAsync("body", (Email)email);
+            message.From[0].ToString().ShouldBe("test@test.com");
         }
 
         [Fact]
@@ -314,34 +285,28 @@ Hello, World!";
             dynamic email = new Email("Test");
             email.ReplyTo = "test@test.com";
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
-            using (var message = await parser.ParseAsync("body", (Email)email))
-            {
-                message.ReplyToList[0].Address.ShouldBe("test@test.com");
-            }
+            var message = await parser.ParseAsync("body", (Email)email);
+            message.ReplyTo[0].ToString().ShouldBe("test@test.com");
         }
 
         [Fact]
         public async Task Priority_header_can_be_set_automatically()
         {
             dynamic email = new Email("Test");
-            email.Priority = "high";
+            email.Priority = "Urgent";
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
-            using (var message = await parser.ParseAsync("body", (Email)email))
-            {
-                message.Priority = MailPriority.High;
-            }
+            var message = await parser.ParseAsync("body", (Email)email);
+            message.Priority = MessagePriority.Urgent;
         }
 
         [Fact]
         public async Task Priority_header_can_be_set_automatically_from_MailPriorityEnum()
         {
             dynamic email = new Email("Test");
-            email.Priority = MailPriority.High;
+            email.Priority = MessagePriority.Urgent;
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
-            using (var message = await parser.ParseAsync("body", (Email)email))
-            {
-                message.Priority = MailPriority.High;
-            }
+            var message = await parser.ParseAsync("body", (Email)email);
+            message.Priority = MessagePriority.Urgent;
         }
 
         [Fact]
@@ -354,11 +319,9 @@ Subject: test
 message";
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
             var email = new Email("Test");
-            using (var message = await parser.ParseAsync(input, email))
-            {
-                message.To[0].Address.ShouldBe("test@test.com");
-                message.To[0].DisplayName.ShouldBe("John Smith");
-            }
+            var message = await parser.ParseAsync(input, email);
+            message.To[0].ToString().ShouldBe("test@test.com");
+            message.To[0].Name.ShouldBe("John Smith");
         }
 
         [Fact]
@@ -375,11 +338,9 @@ message";
 
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
             var email = new Email("Test");
-            using (var message = await parser.ParseAsync(input, email))
-            {
-                message.To.Count.ShouldBe(1);
-                message.To[0].Address.ShouldBe("test@test.com");
-            }
+            var message = await parser.ParseAsync(input, email);
+            message.To.Count.ShouldBe(1);
+            message.To[0].ToString().ShouldBe("test@test.com");
         }
 
         [Fact]
@@ -393,15 +354,13 @@ Subject: test
 message";
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
             var email = new Email("Test");
-            using (var message = await parser.ParseAsync(input, email))
-            {
-                message.ReplyToList[0].Address.ShouldBe("other@test.com");
+            var message = await parser.ParseAsync(input, email);
+            message.ReplyTo[0].ToString().ShouldBe("other@test.com");
 
-                // Check for bug reported here: http://aboutcode.net/2010/11/17/going-postal-generating-email-with-aspnet-mvc-view-engines.html#comment-153486994
-                // Should not add anything extra to the 'To' list.
-                message.To.Count.ShouldBe(1);
-                message.To[0].Address.ShouldBe("test@test.com");
-            }
+            // Check for bug reported here: http://aboutcode.net/2010/11/17/going-postal-generating-email-with-aspnet-mvc-view-engines.html#comment-153486994
+            // Should not add anything extra to the 'To' list.
+            message.To.Count.ShouldBe(1);
+            message.To[0].ToString().ShouldBe("test@test.com");
         }
 
         [Fact]
@@ -415,13 +374,11 @@ message";
             var parser = new EmailParser(Mock.Of<IEmailViewRender>());
             dynamic email = new Email("Test");
             email.To = "test@test.com";
-            using (var message = await parser.ParseAsync(input, (Email)email))
-            {
-                // Check for bug reported here: http://aboutcode.net/2010/11/17/going-postal-generating-email-with-aspnet-mvc-view-engines.html#comment-153486994
-                // Should not add anything extra to the 'To' list.
-                message.To.Count.ShouldBe(1);
-                message.To[0].Address.ShouldBe("test@test.com");
-            }
+            var message = await parser.ParseAsync(input, (Email)email);
+            // Check for bug reported here: http://aboutcode.net/2010/11/17/going-postal-generating-email-with-aspnet-mvc-view-engines.html#comment-153486994
+            // Should not add anything extra to the 'To' list.
+            message.To.Count.ShouldBe(1);
+            message.To[0].ToString().ShouldBe("test@test.com");
         }
     }
 }

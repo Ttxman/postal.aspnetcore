@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.Mvc.Internal;
 using Microsoft.Extensions.Logging;
+using MimeKit;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -95,7 +96,7 @@ namespace Postal.AspNetCore
             // no special requests; render what's in the template
             if (string.IsNullOrEmpty(format))
             {
-                if (!mailMessage.IsBodyHtml)
+                if (mailMessage.HtmlBody is null)
                 {
                     await writer.WriteAsync(result);
                     return TextContentType;
@@ -114,7 +115,7 @@ namespace Postal.AspNetCore
 
             if (format == "text")
             {
-                if (mailMessage.IsBodyHtml)
+                if (!(mailMessage.HtmlBody is null))
                     throw new NotSupportedException("No text view available for this email");
 
                 writer.Write(result);
@@ -123,7 +124,7 @@ namespace Postal.AspNetCore
 
             if (format == "html")
             {
-                if (!mailMessage.IsBodyHtml)
+                if (mailMessage.HtmlBody is null)
                     throw new NotSupportedException("No html view available for this email");
 
                 var template = Extract(result);
@@ -179,36 +180,36 @@ namespace Postal.AspNetCore
         }
 
 
-        static string CheckAlternativeViews(TextWriter writer, MailMessage mailMessage, string format)
+        static string CheckAlternativeViews(TextWriter writer, MimeMessage mailMessage, string format)
         {
             var contentType = format == "html"
                 ? HtmlContentType
                 : TextContentType;
 
             // check for alternative view
-            var view = mailMessage.AlternateViews.FirstOrDefault(v => v.ContentType.MediaType == contentType);
+            var view = mailMessage.BodyParts.Where(p=>p is MimePart).Cast<MimePart>().FirstOrDefault(v => v.ContentType.MediaType == contentType);
 
             if (view == null)
                 return null;
 
             string content;
-            using (var reader = new StreamReader(view.ContentStream))
+            using (var reader = new StreamReader(view.Content.Stream))
                 content = reader.ReadToEnd();
 
-            content = ReplaceLinkedImagesWithEmbeddedImages(view, content);
+            content = ReplaceLinkedImagesWithEmbeddedImages(mailMessage, content);
 
             writer.Write(content);
             return contentType;
         }
 
-        internal static string ReplaceLinkedImagesWithEmbeddedImages(AlternateView view, string content)
+        internal static string ReplaceLinkedImagesWithEmbeddedImages(MimeMessage mailMessage, string content)
         {
-            var resources = view.LinkedResources;
+            var resources = mailMessage.Attachments;
 
             if (!resources.Any())
                 return content;
 
-            foreach (var resource in resources)
+            foreach (MimePart resource in resources.Where(r => r is MimePart))
             {
                 var find = "src=\"cid:" + resource.ContentId + "\"";
                 var imageData = ComposeImageData(resource);
@@ -218,10 +219,11 @@ namespace Postal.AspNetCore
             return content;
         }
 
-        static string ComposeImageData(LinkedResource resource)
+        static string ComposeImageData(MimePart resource)
         {
             var contentType = resource.ContentType.MediaType;
-            var bytes = ReadFully(resource.ContentStream);
+
+            var bytes = ReadFully(resource.Content.Stream);
             return string.Format("data:{0};base64,{1}",
                 contentType,
                 Convert.ToBase64String(bytes));

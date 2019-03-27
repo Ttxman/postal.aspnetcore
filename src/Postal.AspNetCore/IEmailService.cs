@@ -1,3 +1,4 @@
+using MimeKit;
 using System.Net.Mail;
 using System.Threading.Tasks;
 
@@ -14,7 +15,7 @@ namespace Postal
         /// </summary>
         /// <param name="email">The email to send.</param>
         /// <returns>A <see cref="Task"/> that completes once the email has been sent.</returns>
-        Task SendAsync(MailMessage email);
+        Task SendAsync(MimeMessage email);
 
         /// <summary>
         /// Send an email asynchronously, using an <see cref="SmtpClient"/>.
@@ -29,6 +30,6 @@ namespace Postal
         /// </summary>
         /// <param name="email">The email to generate.</param>
         /// <returns>A new <see cref="MailMessage"/>.</returns>
-        Task<MailMessage> CreateMailMessageAsync(Email email);
+        Task<MimeMessage> CreateMailMessageAsync(Email email);
     }
 }

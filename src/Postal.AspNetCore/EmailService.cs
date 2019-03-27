@@ -1,11 +1,12 @@
 using System;
-using System.Net.Mail;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Postal.AspNetCore;
 using Microsoft.Extensions.Logging;
+using MailKit.Net.Smtp;
+using MimeKit;
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Postal.Tests")]
 namespace Postal
@@ -15,18 +16,6 @@ namespace Postal
     /// </summary>
     public class EmailService : IEmailService
     {
-        /// <summary>Creates a new <see cref="EmailService"/>, using the given view engines.</summary>
-        [Obsolete]
-        public static EmailService Create(IServiceProvider serviceProvider, Func<SmtpClient> createSmtpClient = null)
-        {
-            var emailViewRender = serviceProvider.GetRequiredService<IEmailViewRender>();
-            var emailParser = serviceProvider.GetRequiredService<IEmailParser>();
-            var options = Options.Create(new EmailServiceOptions() { CreateSmtpClient = createSmtpClient });
-            var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
-            var logger = loggerFactory.CreateLogger<EmailService>();
-            return new EmailService(emailViewRender, emailParser, options, logger);
-        }
-
         /// <summary>
         /// Creates a new <see cref="EmailService"/>.
         /// </summary>
@@ -44,13 +33,7 @@ namespace Postal
         protected ILogger<EmailService> logger;
 
         //for unit testing
-        internal Func<SmtpClient> CreateSmtpClient
-        {
-            get
-            {
-                return options.CreateSmtpClient;
-            }
-        }
+        internal Func<Task<SmtpClient>> PrepareSmtpClientAsync => options.PrepareSmtpClientAsync;
 
         /// <summary>
         /// Send an email asynchronously, using an <see cref="SmtpClient"/>.
@@ -59,12 +42,8 @@ namespace Postal
         /// <returns>A <see cref="Task"/> that completes once the email has been sent.</returns>
         public async Task SendAsync(Email email)
         {
-            // Wrap the SmtpClient's awkward async API in the much nicer Task pattern.
-            // However, we must be careful to dispose of the resources we create correctly.
-            using (var mailMessage = await CreateMailMessageAsync(email))
-            {
-                await SendAsync(mailMessage);
-            }
+            var mailMessage = await CreateMailMessageAsync(email);
+            await SendAsync(mailMessage);
         }
 
         /// <summary>
@@ -72,13 +51,14 @@ namespace Postal
         /// </summary>
         /// <param name="email">The email to send.</param>
         /// <returns>A <see cref="Task"/> that completes once the email has been sent.</returns>
-        public async Task SendAsync(MailMessage mailMessage)
+        public async Task SendAsync(MimeMessage mailMessage)
         {
-            using (var smtp = options.CreateSmtpClient())
+            using (var smtp = await options.PrepareSmtpClientAsync())
             {
-                this.logger.LogDebug($"Smtp created: host: {smtp.Host}, port: {smtp.Port}, enableSsl: {smtp.EnableSsl}, defaultCredentials: {smtp.UseDefaultCredentials}");
+                this.logger.LogDebug($"Smtp created: host: {options.Host}, port: {options.Port}, securiry: {options.SecurityOption}");
                 this.logger.LogInformation($"Smtp send email from {mailMessage.From} to {mailMessage.To}");
-                await smtp.SendMailAsync(mailMessage);
+                await smtp.SendAsync(mailMessage);
+                await smtp.DisconnectAsync(true);
             }
         }
 
@@ -87,7 +67,7 @@ namespace Postal
         /// </summary>
         /// <param name="email">The email to render.</param>
         /// <returns>A <see cref="MailMessage"/> containing the rendered email.</returns>
-        public async Task<MailMessage> CreateMailMessageAsync(Email email)
+        public async Task<MimeMessage> CreateMailMessageAsync(Email email)
         {
             var rawEmailString = await emailViewRenderer.RenderAsync(email);
             emailParser = new EmailParser(emailViewRenderer);

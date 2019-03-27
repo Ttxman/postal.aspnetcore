@@ -1,11 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Dynamic;
-using System.Net.Mail;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using Microsoft.AspNetCore.Routing;
+using MimeKit;
 using Postal.AspNetCore;
 
 namespace Postal
@@ -22,12 +22,13 @@ namespace Postal
         /// <remarks>Used when defining strongly typed Email classes.</remarks>
         protected Email()
         {
-            Attachments = new List<Attachment>();
             ViewName = DeriveViewNameFromClassName();
             ViewData = new ViewDataDictionary(new EmptyModelMetadataProvider(), new ModelStateDictionary());
             ViewData.Model = this;
             ImageEmbedder = new ImageEmbedder();
         }
+
+        public BodyBuilder BodyBuilder { get; } = new BodyBuilder();
 
         /// <summary>
         /// Creates a new Email, that will render the given view.
@@ -42,7 +43,7 @@ namespace Postal
             if (viewName == null) throw new ArgumentNullException(nameof(viewName));
             if (string.IsNullOrWhiteSpace(viewName)) throw new ArgumentException("View name cannot be empty.", "viewName");
 
-            Attachments = new List<Attachment>();
+            
             ViewName = viewName;
             ViewData = new ViewDataDictionary(modelMetadataProvider, new ModelStateDictionary());
             ViewData.Model = this;
@@ -74,21 +75,8 @@ namespace Postal
         /// </summary>
         public ViewDataDictionary ViewData { get; set; }
 
-        /// <summary>
-        /// The attachments to send with the email.
-        /// </summary>
-        public List<Attachment> Attachments { get; set; }
 
         internal ImageEmbedder ImageEmbedder { get; private set; }
-
-        /// <summary>
-        /// Adds an attachment to the email.
-        /// </summary>
-        /// <param name="attachment">The attachment to add.</param>
-        public void Attach(Attachment attachment)
-        {
-            Attachments.Add(attachment);
-        }
 
         /// <summary>
         /// Convenience method that sends this email asynchronously via a default EmailService. 

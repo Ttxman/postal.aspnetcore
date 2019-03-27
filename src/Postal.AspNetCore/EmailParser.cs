@@ -1,8 +1,9 @@
+using MimeKit;
+using MimeKit.Text;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Mail;
 using System.Net.Mime;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -32,15 +33,11 @@ namespace Postal
         /// <param name="emailViewOutput">The email view output.</param>
         /// <param name="email">The <see cref="Email"/> used to generate the output.</param>
         /// <returns>A <see cref="MailMessage"/> containing the email headers and content.</returns>
-        public async Task<MailMessage> ParseAsync(string emailViewOutput, Email email)
+        public async Task<MimeMessage> ParseAsync(string emailViewOutput, Email email)
         {
-            var message = new MailMessage();
-            await InitializeMailMessageAsync(message, emailViewOutput, email);
-            return message;
-        }
+            var message = new MimeMessage();
+            var builder = email.BodyBuilder;
 
-        private async Task InitializeMailMessageAsync(MailMessage message, string emailViewOutput, Email email)
-        {
             if (string.IsNullOrWhiteSpace(emailViewOutput))
             {
                 throw new ArgumentNullException(nameof(emailViewOutput));
@@ -49,59 +46,61 @@ namespace Postal
             {
                 await ParserUtils.ParseHeadersAsync(reader, (key, value) => ProcessHeaderAsync(key, value, message, email));
                 AssignCommonHeaders(message, email);
-                if (message.AlternateViews.Count == 0)
+                if (builder.TextBody is null && builder.HtmlBody is null)
                 {
                     var messageBody = reader.ReadToEnd().Trim();
                     if (email.ImageEmbedder.HasImages)
                     {
-                        var view = AlternateView.CreateAlternateViewFromString(messageBody, new ContentType("text/html"));
-                        email.ImageEmbedder.AddImagesToView(view);
-                        message.AlternateViews.Add(view);
-                        message.Body = "Plain text not available.";
-                        message.IsBodyHtml = false;
+                        builder.TextBody = "Plain text not available.";
+                        foreach (var r in email.ImageEmbedder.Builder.LinkedResources)
+                            builder.LinkedResources.Add(r);
                     }
                     else
                     {
-                        message.Body = messageBody;
-                        if (message.Body.StartsWith("<")) message.IsBodyHtml = true;
+                        if (messageBody.StartsWith("<"))
+                            builder.HtmlBody = messageBody;
+                        else
+                            builder.TextBody = messageBody;
                     }
                 }
-
-                AddAttachments(message, email);
             }
+
+
+            return message;
         }
 
-        private void AssignCommonHeaders(MailMessage message, Email email)
+
+        private void AssignCommonHeaders(MimeMessage message, Email email)
         {
             if (message.To.Count == 0)
             {
-                AssignCommonHeader<string>(email, "to", to => message.To.Add(to));
-                AssignCommonHeader<MailAddress>(email, "to", to => message.To.Add(to));
+                AssignCommonHeader<string>(email, "to", to => message.To.Add(new MailboxAddress(to)));
+                AssignCommonHeader<MailboxAddress>(email, "to", to => message.To.Add(to));
             }
             if (message.From == null)
             {
-                AssignCommonHeader<string>(email, "from", from => message.From = new MailAddress(from));
-                AssignCommonHeader<MailAddress>(email, "from", from => message.From = from);
+                AssignCommonHeader<string>(email, "from", from => message.From.Add(new MailboxAddress(from)));
+                AssignCommonHeader<MailboxAddress>(email, "from", from => message.From.Add(from));
             }
-            if (message.CC.Count == 0)
+            if (message.Cc.Count == 0)
             {
-                AssignCommonHeader<string>(email, "cc", cc => message.CC.Add(cc));
-                AssignCommonHeader<MailAddress>(email, "cc", cc => message.CC.Add(cc));
+                AssignCommonHeader<string>(email, "cc", cc => message.Cc.Add(new MailboxAddress(cc)));
+                AssignCommonHeader<MailboxAddress>(email, "cc", cc => message.Cc.Add(cc));
             }
             if (message.Bcc.Count == 0)
             {
-                AssignCommonHeader<string>(email, "bcc", bcc => message.Bcc.Add(bcc));
-                AssignCommonHeader<MailAddress>(email, "bcc", bcc => message.Bcc.Add(bcc));
+                AssignCommonHeader<string>(email, "bcc", bcc => message.Bcc.Add(new MailboxAddress(bcc)));
+                AssignCommonHeader<MailboxAddress>(email, "bcc", bcc => message.Bcc.Add(bcc));
             }
-            if (message.ReplyToList.Count == 0)
+            if (message.ResentReplyTo.Count == 0)
             {
-                AssignCommonHeader<string>(email, "replyto", replyTo => message.ReplyToList.Add(replyTo));
-                AssignCommonHeader<MailAddress>(email, "replyto", replyTo => message.ReplyToList.Add(replyTo));
+                AssignCommonHeader<string>(email, "replyto", replyTo => message.ResentReplyTo.Add(new MailboxAddress(replyTo)));
+                AssignCommonHeader<MailboxAddress>(email, "replyto", replyTo => message.ResentReplyTo.Add(replyTo));
             }
             if (message.Sender == null)
             {
-                AssignCommonHeader<string>(email, "sender", sender => message.Sender = new MailAddress(sender));
-                AssignCommonHeader<MailAddress>(email, "sender", sender => message.Sender = sender);
+                AssignCommonHeader<string>(email, "sender", sender => message.Sender = new MailboxAddress(sender));
+                AssignCommonHeader<MailboxAddress>(email, "sender", sender => message.Sender = sender);
             }
             if (string.IsNullOrEmpty(message.Subject))
             {
@@ -112,75 +111,60 @@ namespace Postal
         private void AssignCommonHeader<T>(Email email, string header, Action<T> assign)
             where T : class
         {
-            object value;
-            if (email.ViewData.TryGetValue(header, out value))
+            if (email.ViewData.TryGetValue(header, out object value))
             {
-                var typedValue = value as T;
-                if (typedValue != null) assign(typedValue);
+                if (value is T typedValue)
+                    assign(typedValue);
             }
         }
 
-        private async Task ProcessHeaderAsync(string key, string value, MailMessage message, Email email)
+        private async Task ProcessHeaderAsync(string key, string value, MimeMessage message, Email email)
         {
             if (IsAlternativeViewsHeader(key))
-            {
-                foreach (var view in CreateAlternativeViews(value, email))
-                {
-                    message.AlternateViews.Add(await view);
-                }
-            }
+                await CreateAlternativeViews(value, email);
             else
-            {
                 AssignEmailHeaderToMailMessage(key, value, message);
-            }
         }
 
-        private IEnumerable<Task<AlternateView>> CreateAlternativeViews(string deliminatedViewNames, Email email)
+        private async Task CreateAlternativeViews(string deliminatedViewNames, Email email)
         {
             var viewNames = deliminatedViewNames.Split(new[] { ',', ' ', ';' }, StringSplitOptions.RemoveEmptyEntries);
-            return viewNames.Select(v => CreateAlternativeView(email, v)).ToList();
-        }
-
-        private async Task<AlternateView> CreateAlternativeView(Email email, string alternativeViewName)
-        {
-            var fullViewName = GetAlternativeViewName(email, alternativeViewName);
-            var output = await alternativeViewRenderer.RenderAsync(email, fullViewName);
-            string contentType;
-            string body;
-            using (var reader = new StringReader(output))
+            foreach (var alternativeViewName in viewNames)
             {
-                contentType = ParseHeadersForContentType(reader);
-                body = reader.ReadToEnd();
-            }
+                var fullViewName = GetAlternativeViewName(email, alternativeViewName);
+                var output = await alternativeViewRenderer.RenderAsync(email, fullViewName);
 
-            if (string.IsNullOrWhiteSpace(contentType))
-            {
-                if (alternativeViewName.Equals("text", StringComparison.OrdinalIgnoreCase))
+                string contentType;
+                string body;
+                using (var reader = new StringReader(output))
                 {
-                    contentType = "text/plain";
+                    contentType = ParseHeadersForContentType(reader);
+                    body = reader.ReadToEnd();
                 }
-                else if (alternativeViewName.Equals("html", StringComparison.OrdinalIgnoreCase))
-                {
-                    contentType = "text/html";
-                }
-                else
-                {
-                    throw new Exception("The 'Content-Type' header is missing from the alternative view '" + fullViewName + "'.");
-                }
-            }
 
-            var stream = CreateStreamOfBody(body);
-            var alternativeView = new AlternateView(stream, contentType);
-            if (alternativeView.ContentType.CharSet == null)
-            {
-                // Must set a charset otherwise mail readers seem to guess the wrong one!
-                // Strings are unicode by default in .net.
-                alternativeView.ContentType.CharSet = Encoding.Unicode.WebName;
-                // A different charset can be specified in the Content-Type header.
-                // e.g. Content-Type: text/html; charset=utf-8
+                if (string.IsNullOrWhiteSpace(contentType))
+                {
+                    if (alternativeViewName.Equals("text", StringComparison.OrdinalIgnoreCase))
+                        contentType = "text/plain";
+                    else if (alternativeViewName.Equals("html", StringComparison.OrdinalIgnoreCase))
+                        contentType = "text/html";
+                }
+
+                switch (contentType)
+                {
+                    case "text/plain":
+                        email.BodyBuilder.TextBody = body;
+                        break;
+                    case "text/html":
+                        email.BodyBuilder.HtmlBody = body;
+                        break;
+                    default:
+                        throw new Exception("The 'Content-Type' header is unknown or missing from the alternative view '" + fullViewName + "'.");
+                }
+
+                foreach (var r in email.ImageEmbedder.Builder.LinkedResources)
+                    email.BodyBuilder.LinkedResources.Add(r);
             }
-            email.ImageEmbedder.AddImagesToView(alternativeView);
-            return alternativeView;
         }
 
         private static string GetAlternativeViewName(Email email, string alternativeViewName)
@@ -194,16 +178,6 @@ namespace Postal
             {
                 return email.ViewName + "." + alternativeViewName;
             }
-        }
-
-        private MemoryStream CreateStreamOfBody(string body)
-        {
-            var stream = new MemoryStream();
-            var writer = new StreamWriter(stream);
-            writer.Write(body);
-            writer.Flush();
-            stream.Position = 0;
-            return stream;
         }
 
         private string ParseHeadersForContentType(StringReader reader)
@@ -224,33 +198,33 @@ namespace Postal
             return headerName.Equals("views", StringComparison.OrdinalIgnoreCase);
         }
 
-        private void AssignEmailHeaderToMailMessage(string key, string value, MailMessage message)
+        private void AssignEmailHeaderToMailMessage(string key, string value, MimeMessage message)
         {
             switch (key)
             {
                 case "to":
-                    message.To.Add(value);
+                    message.To.Add(new MailboxAddress(value));
                     break;
                 case "from":
-                    message.From = new MailAddress(value);
+                    message.From.Add(new MailboxAddress(value));
                     break;
                 case "subject":
                     message.Subject = value;
                     break;
                 case "cc":
-                    message.CC.Add(value);
+                    message.Cc.Add(new MailboxAddress(value));
                     break;
                 case "bcc":
-                    message.Bcc.Add(value);
+                    message.Bcc.Add(new MailboxAddress(value));
                     break;
                 case "reply-to":
-                    message.ReplyToList.Add(value);
+                    message.ReplyTo.Add(new MailboxAddress(value));
                     break;
                 case "sender":
-                    message.Sender = new MailAddress(value);
+                    message.Sender = new MailboxAddress(value);
                     break;
                 case "priority":
-                    MailPriority priority;
+                    MessagePriority priority;
                     if (Enum.TryParse(value, true, out priority))
                     {
                         message.Priority = priority;
@@ -264,7 +238,7 @@ namespace Postal
                     var charsetMatch = Regex.Match(value, @"\bcharset\s*=\s*(.*)$");
                     if (charsetMatch.Success)
                     {
-                        message.BodyEncoding = Encoding.GetEncoding(charsetMatch.Groups[1].Value);
+                        message.Body.ContentType.Charset = charsetMatch.Groups[1].Value;
                     }
                     break;
                 default:
@@ -277,14 +251,6 @@ namespace Postal
                         message.Headers[key] = value;
                     }
                     break;
-            }
-        }
-
-        void AddAttachments(MailMessage message, Email email)
-        {
-            foreach (var attachment in email.Attachments)
-            {
-                message.Attachments.Add(attachment);
             }
         }
     }
