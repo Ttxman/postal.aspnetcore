@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Mime;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -65,6 +64,7 @@ namespace Postal
                 }
             }
 
+            message.Body = builder.ToMessageBody();
 
             return message;
         }
@@ -149,8 +149,9 @@ namespace Postal
                     else if (alternativeViewName.Equals("html", StringComparison.OrdinalIgnoreCase))
                         contentType = "text/html";
                 }
+                var ct = ContentType.Parse(contentType);
 
-                switch (contentType)
+                switch (ct.MimeType)
                 {
                     case "text/plain":
                         email.BodyBuilder.TextBody = body;
